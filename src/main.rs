@@ -17,7 +17,7 @@ fn main() {
         Mode::Decode => decode_file(config.input_path, config.output_path),
     }
 
-    test();
+    // test();
 
     /* hzip [encode|decode] input-name [-o output-name]
      * Parse arguments
@@ -64,14 +64,32 @@ impl Config {
     }
 }
 
-fn encode_file<P: AsRef<Path>>(input: P, output: P) {
-    let text = fs::read_to_string(input);
-    let table = count_chars(text);
-    let tree = HuffmanNode::build_tree(table);
-    let encoded_text = tree.encode(text);
+fn encode_file<P: AsRef<Path>>(input_path: P, output_path: P) {
+    let text = fs::read_to_string(input_path).expect("file should exist.");
+    let table = count_chars(&text);
+    let (chars, counts): (String, Vec<u64>) = table.iter().unzip();
+    let encoded_text = match HuffmanNode::build_tree(&table) {
+        Some(tree) => tree.encode(&text),
+        None => BitVec::<u8, Msb0>::new(),
+    };
 
+    let mut output: Vec<u8> = Vec::new();
 
-    fs::write(output, output_data);
+    let chars_start: u64 = 40;
+    let counts_start: u64 = chars_start + chars.len() as u64;
+    let data_start: u64 = counts_start + (counts.len() << 3) as u64;
+
+    output.extend((text.len() as u64).to_be_bytes());
+    output.extend((table.len() as u64).to_be_bytes());
+    output.extend(chars_start.to_be_bytes());
+    output.extend(counts_start.to_be_bytes());
+    output.extend(data_start.to_be_bytes());
+
+    output.extend(chars.bytes());
+    output.extend(counts.iter().flat_map(|count| count.to_be_bytes()));
+    output.extend(encoded_text.as_raw_slice());
+
+    fs::write(output_path, output).expect("I dunno, how could this go wrong?");
 }
 
 fn decode_file<P: AsRef<Path>>(input: P, output: P) {
@@ -92,7 +110,7 @@ fn test() {
 
     let input = _real;
 
-    let root = HuffmanNode::build_tree(count_chars(input));
+    let root = HuffmanNode::build_tree(&count_chars(input)).unwrap();
     let root = Box::new(root);
     print_dot(&root);
 
@@ -117,13 +135,13 @@ fn print_dot(node: &Box<HuffmanNode>) {
 
 struct HuffmanNode {
     value: char,
-    weight: u32,
+    weight: u64,
     left: Option<Box<HuffmanNode>>, 
     right: Option<Box<HuffmanNode>>,
 }
 
 impl HuffmanNode {
-    fn leaf(value: char, weight: u32) -> HuffmanNode {
+    fn leaf(value: char, weight: u64) -> HuffmanNode {
         HuffmanNode {
             value: value,
             weight: weight,
@@ -141,7 +159,9 @@ impl HuffmanNode {
         }
     }
 
-    fn build_tree(table: HashMap<char, u32>) -> HuffmanNode {
+    fn build_tree(table: &HashMap<char, u64>) -> Option<HuffmanNode> {
+        if table.len() <= 1 { return None; }
+
         let mut heap = BinaryHeap::from_iter(
             table.iter().map(|(k, v)| Reverse(HuffmanNode::leaf(*k, *v)))
         );
@@ -153,7 +173,7 @@ impl HuffmanNode {
             heap.push(Reverse(HuffmanNode::internal(left, right)));
         }
         
-        heap.pop().expect("character set should not be empty").0
+        return Some(heap.pop().unwrap().0);
     }
 
     fn get_char_codes(&self) -> HashMap<char, BitVec<u8, Msb0>> {
@@ -235,7 +255,7 @@ impl Ord for HuffmanNode {
     }
 }
 
-fn count_chars(text: &str) -> HashMap<char, u32> {
+fn count_chars(text: &str) -> HashMap<char, u64> {
     let mut char_counts = HashMap::new();
 
     for c in text.chars() {
