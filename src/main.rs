@@ -1,7 +1,9 @@
 use std::collections::{HashMap, BinaryHeap};
 use std::cmp::{Ordering, Reverse};
 use std::path::Path;
-use std::{env, fs};
+use std::io::{Read, Write};
+use std::fs::File;
+use std::env;
 use bitvec::prelude::*;
 
 
@@ -12,9 +14,12 @@ fn main() {
         Err(msg) => { println!("{msg}"); return; },
     };
 
+    let mut input = File::open(config.input_path).unwrap();
+    let mut output = File::create(config.output_path).unwrap();
+
     match config.mode {
-        Mode::Encode => encode_file(config.input_path, config.output_path),
-        Mode::Decode => decode_file(config.input_path, config.output_path),
+        Mode::Encode => encode_file(&mut input, &mut output),
+        Mode::Decode => decode_file(&mut input, &mut output),
     }
 
     // test();
@@ -64,8 +69,9 @@ impl Config {
     }
 }
 
-fn encode_file<P: AsRef<Path>>(input_path: P, output_path: P) {
-    let text = fs::read_to_string(input_path).expect("file should exist.");
+fn encode_file<R: Read, W: Write>(input: &mut R, output: &mut W) {
+    let mut text = String::new();
+    input.read_to_string(&mut text).expect("File must be utf8-encoded.");
     let table = count_chars(&text);
     let (chars, counts): (String, Vec<u64>) = table.iter().unzip();
     let encoded_text = match HuffmanNode::build_tree(&table) {
@@ -73,23 +79,23 @@ fn encode_file<P: AsRef<Path>>(input_path: P, output_path: P) {
         None => BitVec::<u8, Msb0>::new(),
     };
 
-    let mut output: Vec<u8> = Vec::new();
+    let mut data_out: Vec<u8> = Vec::new();
 
     let chars_start: u64 = 40;
     let counts_start: u64 = chars_start + chars.len() as u64;
     let data_start: u64 = counts_start + (counts.len() << 3) as u64;
 
-    output.extend((text.len() as u64).to_be_bytes());
-    output.extend((table.len() as u64).to_be_bytes());
-    output.extend(chars_start.to_be_bytes());
-    output.extend(counts_start.to_be_bytes());
-    output.extend(data_start.to_be_bytes());
+    data_out.extend((text.len() as u64).to_be_bytes());
+    data_out.extend((table.len() as u64).to_be_bytes());
+    data_out.extend(chars_start.to_be_bytes());
+    data_out.extend(counts_start.to_be_bytes());
+    data_out.extend(data_start.to_be_bytes());
 
-    output.extend(chars.bytes());
-    output.extend(counts.iter().flat_map(|count| count.to_be_bytes()));
-    output.extend(encoded_text.as_raw_slice());
+    data_out.extend(chars.bytes());
+    data_out.extend(counts.iter().flat_map(|count| count.to_be_bytes()));
+    data_out.extend(encoded_text.as_raw_slice());
 
-    fs::write(output_path, output).expect("I dunno, how could this go wrong?");
+    output.write_all(&data_out).expect("I dunno, how could this go wrong?");
 }
 
 fn decode_file<P: AsRef<Path>>(input: P, output: P) {
