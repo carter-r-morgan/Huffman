@@ -1,9 +1,9 @@
 use std::collections::{HashMap, BinaryHeap};
 use std::cmp::{Ordering, Reverse};
-use std::path::Path;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::fs::File;
 use std::env;
+use std::iter;
 use bitvec::prelude::*;
 
 
@@ -98,8 +98,41 @@ fn encode_file<R: Read, W: Write>(input: &mut R, output: &mut W) {
     output.write_all(&data_out).expect("I dunno, how could this go wrong?");
 }
 
-fn decode_file<P: AsRef<Path>>(input: P, output: P) {
+fn decode_file<R: Read, W: Write>(input: &mut R, output: &mut W) {
+    let text_len = read_u64(input).unwrap();
+    let table_len = read_u64(input).unwrap();
+    let chars_start = read_u64(input).unwrap();
+    let counts_start = read_u64(input).unwrap();
+    let data_start = read_u64(input).unwrap();
     
+    let chars_len = counts_start - chars_start;
+    let mut chars = String::new();
+    input.by_ref().take(chars_len).read_to_string(&mut chars);
+
+    let mut counts = Vec::new();
+    for _ in 0..table_len {
+        counts.push(read_u64(input).unwrap());
+    }
+
+    let mut data = Vec::new();
+    input.read_to_end(&mut data).unwrap();
+
+    let table = chars.chars().zip(counts).collect::<HashMap<_,_>>();
+    let decoded_text = match HuffmanNode::build_tree(&table) {
+        Some(tree) => tree.decode(data.view_bits::<Msb0>()),
+        None => match table.iter().next() {
+            Some((&character, &count)) => iter::repeat(character).take(count as usize).collect::<String>(),
+            None => String::new(),
+        },
+    };
+
+    output.write_all(decoded_text.as_bytes());
+}
+
+fn read_u64<R: Read>(input: &mut R) -> io::Result<u64> {
+    let mut buffer = [0; 8];
+    input.read_exact(&mut buffer)?;
+    return Ok(u64::from_be_bytes(buffer));
 }
 
 // -----------------------------------------------------------
@@ -217,6 +250,7 @@ impl HuffmanNode {
     fn decode(&self, data: &BitSlice<u8, Msb0>) -> String {
         let mut node = self;
         let mut output = String::new();
+        let mut char_count = 0;
 
         for bit in data.iter().by_vals() {
             if bit {
@@ -228,6 +262,9 @@ impl HuffmanNode {
 
             if let (None, None) = (&node.left, &node.right) {
                 output.push(node.value);
+                char_count += 1;
+                if char_count == self.weight { break; }
+
                 node = self;
             }
         }
